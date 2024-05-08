@@ -4,6 +4,28 @@ from ..structures.core import StructureFamily
 from ..structures.data_source import DataSource, Management
 from .base import BaseClient
 
+__pbar = None
+
+
+def progress_copy(
+    source: BaseClient,
+    dest: BaseClient,
+):
+    """
+    Copy data from one Tiled instance to another.
+    Like `copy`, but with a progress bar.
+
+
+    """
+    from tqdm.auto import tqdm
+
+    global __pbar
+
+    with tqdm() as pbar:
+        __pbar = pbar
+        __pbar.total = 0
+        copy(source, dest)
+
 
 def copy(
     source: BaseClient,
@@ -44,35 +66,59 @@ def copy(
 
 def _copy_array(source, dest):
     num_blocks = (range(len(n)) for n in source.chunks)
+    if __pbar is not None:
+        __pbar.total = __pbar.total + num_blocks
+        __pbar.refresh()
+
     # Loop over each block index --- e.g. (0, 0), (0, 1), (0, 2) ....
     for block in itertools.product(*num_blocks):
         array = source.read_block(block)
         dest.write_block(array, block)
+        if __pbar is not None:
+            __pbar.update(1)
 
 
 def _copy_awkward(source, dest):
     import awkward
 
+    if __pbar is not None:
+        __pbar.total = __pbar.total + 1
+        __pbar.refresh()
     array = source.read()
     _form, _length, container = awkward.to_buffers(array)
     dest.write(container)
+    if __pbar is not None:
+        __pbar.update(1)
 
 
 def _copy_sparse(source, dest):
     num_blocks = (range(len(n)) for n in source.chunks)
+    if __pbar is not None:
+        __pbar.total = __pbar.total + num_blocks
+        __pbar.refresh()
     # Loop over each block index --- e.g. (0, 0), (0, 1), (0, 2) ....
     for block in itertools.product(*num_blocks):
         array = source.read_block(block)
         dest.write_block(array.coords, array.data, block)
+        if __pbar is not None:
+            __pbar.update(1)
 
 
 def _copy_table(source, dest):
+    if __pbar is not None:
+        __pbar.total = __pbar.total + source.structure().npartitions
+        __pbar.refresh()
     for partition in range(source.structure().npartitions):
         df = source.read_partition(partition)
         dest.write_partition(df, partition)
+        if __pbar is not None:
+            __pbar.update(1)
 
 
 def _copy_container(source, dest):
+    if __pbar is not None:
+        __pbar.total = __pbar.total + len(source)
+        __pbar.refresh()
     for key, child_node in source.items():
         original_data_sources = child_node.include_data_sources().data_sources()
         num_data_sources = len(original_data_sources)
@@ -123,6 +169,9 @@ def _copy_container(source, dest):
             and (not original_data_sources)
         ):
             _DISPATCH[child_node.structure_family](child_node, node)
+
+        if __pbar is not None:
+            __pbar.update(1)
 
 
 _DISPATCH = {
